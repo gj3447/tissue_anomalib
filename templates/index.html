@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Anomaly Scanner - Step by Step</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; margin: 20px; background-color: #f4f4f9; }
+        h1, h2 { color: #333; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        #video-container { position: relative; width: 100%; max-width: 640px; margin: 1em auto; border: 2px solid #ccc; background-color: #000; border-radius: 8px; overflow: hidden; }
+        video { width: 100%; height: auto; display: block; }
+        #status { margin-top: 1em; font-weight: bold; color: #555; min-height: 1.5em; }
+        #controls, #inference-controls { margin-top: 15px; display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap; }
+        button { padding: 10px 15px; font-size: 16px; cursor: pointer; border-radius: 5px; border: 1px solid #ccc; background-color: #007bff; color: white; border: none; }
+        button:disabled { cursor: not-allowed; background-color: #aaa; }
+        .grid-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; margin-top: 20px; }
+        .grid-item { text-align: center; }
+        .grid-item img { max-width: 100%; border: 1px solid #ddd; border-radius: 4px; }
+        .grid-item p { margin-bottom: 5px; font-weight: bold; }
+        .step-container { margin-top: 20px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Anomaly Scanner</h1>
+        <div id="video-container">
+            <video id="video" autoplay playsinline></video>
+        </div>
+        <div id="status">카메라를 기다리는 중...</div>
+        <div id="controls">
+            <div>
+                <label for="camera-select">카메라 선택:</label>
+                <select id="camera-select"></select>
+            </div>
+        </div>
+
+        <!-- 스캔 단계 -->
+        <div class="step-container">
+            <h2>Step 1: 실시간 스캔</h2>
+            <button id="scan-button" disabled>① 스캔하기</button>
+            <div id="scan-result-container" style="display:none; margin-top:15px;">
+                <p><b>스캔 결과 (1024x1024)</b></p>
+                <img id="scanned_img" src="" style="max-width: 256px; border: 2px solid #007bff; border-radius: 4px;" />
+            </div>
+        </div>
+
+        <!-- 추론 단계 -->
+        <div class="step-container">
+            <h2>Step 2: 이상 탐지 추론</h2>
+            <button id="predict-button" disabled>② 추론하기</button>
+        </div>
+
+        <!-- 추론 결과 표시 영역 -->
+        <div id="prediction_results" style="display: none; margin-top: 20px;">
+            <h3>추론 결과</h3>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 10px;">
+                <div>
+                    <h4>원본 이미지</h4>
+                    <img id="captured_img" style="width: 100%; max-width: 400px; border: 1px solid #ccc;">
+                </div>
+                <div>
+                    <h4>이상치 맵 (그레이스케일)</h4>
+                    <img id="anomaly_map_img" style="width: 100%; max-width: 400px; border: 1px solid #ccc;">
+                </div>
+                <div>
+                    <h4>이진 마스크 (불량 부분)</h4>
+                    <img id="binary_mask_img" style="width: 100%; max-width: 400px; border: 1px solid #ccc;">
+                </div>
+                <div>
+                    <h4>세그멘테이션 결과</h4>
+                    <img id="segmentation_img" style="width: 100%; max-width: 400px; border: 1px solid #ccc;">
+                </div>
+                <div>
+                    <h4>히트맵</h4>
+                    <img id="heatmap_img" style="width: 100%; max-width: 400px; border: 1px solid #ccc;">
+                </div>
+                <div>
+                    <h4>합성 결과</h4>
+                    <img id="result_img" style="width: 100%; max-width: 400px; border: 1px solid #ccc;">
+                </div>
+            </div>
+            <div style="margin-top: 10px;">
+                <p><strong>이상치 점수:</strong> <span id="anomaly_score">-</span></p>
+                <p><strong>판정 결과:</strong> <span id="prediction_label">-</span></p>
+                <p><strong>추론 소요 시간:</strong> <span id="inference_time">-</span> 초</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('video');
+        const statusElement = document.getElementById('status');
+        const cameraSelect = document.getElementById('camera-select');
+        const scanButton = document.getElementById('scan-button');
+        const predictButton = document.getElementById('predict-button');
+        const scanResultContainer = document.getElementById('scan-result-container');
+        const inferenceSummary = document.getElementById('inference-summary');
+        const capturedImg = document.getElementById('captured_img');
+        const resultImg = document.getElementById('result_img');
+        const scannedImg = document.getElementById('scanned_img');
+
+        let currentStream;
+        let lastScannedImageBlob = null; // 마지막으로 성공한 스캔 이미지(Blob) 저장
+        let lastScannedFilename = null; // 마지막으로 성공한 스캔 파일명 저장
+
+        async function populateCameraList() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                cameraSelect.innerHTML = '';
+                videoDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `카메라 ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+            } catch (error) {
+                console.error('카메라 목록을 가져오는 데 실패했습니다:', error);
+            }
+        }
+
+        async function startCamera(deviceId) {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+            scanButton.disabled = true;
+            predictButton.disabled = true; // 카메라 시작 시 추론 버튼도 비활성화
+
+            let constraints;
+            if (deviceId) {
+                constraints = { video: { deviceId: { exact: deviceId } } };
+            } else {
+                // 기본 제약조건: 더 유연한 설정
+                constraints = {
+                    video: {
+                        width: { ideal: 1280, min: 640 },
+                        height: { ideal: 720, min: 480 },
+                        facingMode: { ideal: 'environment', fallback: 'user' }  // 후면 우선, 실패시 전면
+                    }
+                };
+            }
+
+            try {
+                statusElement.textContent = '카메라를 시작합니다...';
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                videoElement.srcObject = stream;
+                currentStream = stream;
+                
+                await populateCameraList();
+                scanButton.disabled = false;
+                statusElement.textContent = '카메라 활성화. 스캔 준비 완료.';
+            } catch (error) {
+                console.error("카메라 시작 중 오류 발생:", error);
+                statusElement.textContent = `카메라 오류: ${error.message}`;
+            }
+        }
+
+        // Step 1: 스캔만 수행하는 함수
+        async function scanOnly() {
+            if (!currentStream) { alert('카메라가 연결되지 않았습니다.'); return; }
+            statusElement.textContent = '스캔 중...';
+            scanButton.disabled = true;
+            predictButton.disabled = true;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = videoElement.videoWidth;
+            canvas.height = videoElement.videoHeight;
+            const context = canvas.getContext('2d');
+            context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+            
+            // Canvas를 Blob으로 변환
+            canvas.toBlob(async (blob) => {
+                try {
+                    const formData = new FormData();
+                    formData.append('file', blob, 'captured_image.jpg');
+
+                    const response = await fetch('/scan_only', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        const err = await response.json();
+                        const errorMsg = err.debug_message ? 
+                            `스캔 실패: ${err.error}\n\n디버그 정보:\n${err.debug_message}` : 
+                            err.error || '스캔 가능한 객체를 찾지 못했습니다.';
+                        throw new Error(errorMsg);
+                    }
+                    
+                    const result = await response.json();
+                    lastScannedFilename = result.filename; // 파일명 저장
+                    
+                    // Base64 이미지 데이터를 Blob으로 변환
+                    const imageData = atob(result.image_data);
+                    const bytes = new Uint8Array(imageData.length);
+                    for (let i = 0; i < imageData.length; i++) {
+                        bytes[i] = imageData.charCodeAt(i);
+                    }
+                    lastScannedImageBlob = new Blob([bytes], { type: 'image/jpeg' });
+                    
+                    scannedImg.src = URL.createObjectURL(lastScannedImageBlob);
+                    scanResultContainer.style.display = 'block';
+                    
+                    // 디버그 메시지 표시
+                    const debugMsg = result.debug_message || '스캔 성공!';
+                    statusElement.textContent = `스캔 성공! 이제 추론할 수 있습니다.\n\n디버그 정보:\n${debugMsg}`;
+                    predictButton.disabled = false; // 스캔 성공 시 추론 버튼 활성화
+
+                } catch (error) {
+                    console.error('스캔 요청 실패:', error);
+                    statusElement.textContent = error.message;
+                    scanResultContainer.style.display = 'none';
+                } finally {
+                    scanButton.disabled = false;
+                }
+            }, 'image/jpeg');
+        }
+        
+        // Step 2: 추론만 수행하는 함수
+        async function predictOnly() {
+            if (!lastScannedFilename) {
+                alert('먼저 스캔을 완료해주세요.');
+                return;
+            }
+
+            const statusElement = document.getElementById('status');
+            statusElement.textContent = '추론 중...';
+
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: lastScannedFilename })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const results = await response.json();
+                statusElement.textContent = '추론 완료!';
+                
+                // 추론 결과 표시
+                const predictionResults = document.getElementById('prediction_results');
+                predictionResults.style.display = 'block';
+                
+                // 모든 이미지 업데이트
+                document.getElementById('captured_img').src = `${results.captured_image}?t=${new Date().getTime()}`;
+                document.getElementById('anomaly_map_img').src = `${results.anomaly_map}?t=${new Date().getTime()}`;
+                document.getElementById('binary_mask_img').src = `${results.binary_mask}?t=${new Date().getTime()}`;
+                document.getElementById('segmentation_img').src = `${results.segmentation}?t=${new Date().getTime()}`;
+                document.getElementById('heatmap_img').src = `${results.heatmap}?t=${new Date().getTime()}`;
+                document.getElementById('result_img').src = `${results.result_image}?t=${new Date().getTime()}`;
+                
+                // 점수와 라벨 업데이트
+                document.getElementById('anomaly_score').textContent = results.anomaly_score.toFixed(4);
+                document.getElementById('prediction_label').textContent = results.label;
+                document.getElementById('inference_time').textContent = results.inference_time;
+
+            } catch (error) {
+                console.error('추론 오류:', error);
+                statusElement.textContent = `추론 오류: ${error.message}`;
+            }
+        }
+
+        cameraSelect.addEventListener('change', () => {
+            startCamera(cameraSelect.value);
+        });
+
+        scanButton.addEventListener('click', scanOnly);
+        predictButton.addEventListener('click', predictOnly);
+
+        // 페이지 로드 시 실행
+        (async () => {
+             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                statusElement.textContent = '오류: 이 브라우저는 카메라 API를 지원하지 않습니다.';
+                return;
+            }
+            
+            try {
+                // 먼저 카메라 목록을 가져옴
+                await populateCameraList();
+                // 그 다음 기본 카메라 시작
+                await startCamera();
+            } catch (error) {
+                console.error('카메라 초기화 오류:', error);
+                statusElement.textContent = `카메라 초기화 오류: ${error.message}`;
+            }
+        })();
+    </script>
+</body>
+</html>

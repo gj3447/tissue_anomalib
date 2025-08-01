@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+opencv-python
+jinja2
+pyngrok
+numpy
+anomalib
+torch
+torchvision
+pytorch-lightning 
