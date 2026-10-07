@@ -1,0 +1,20 @@
+{
+  "schema": "metahumotonic-license-adoption/v1",
+  "date": "2026-10-07",
+  "repository": "gj3447/tissue_anomalib",
+  "base_commit": "ff565b46efcc2ac77f21533cf63b64c574187f32",
+  "base_tree": "b7e904df930201a9a65930d5ff814198432d0ec2",
+  "license": "LicenseRef-MetaHumotonic-1.2",
+  "license_path": "LICENSE",
+  "license_sha256": "dc4439a4bc7ea4cb913ba3a5a9ff679a1dc148a03f77a6deba82758c5a92b5a3",
+  "mode": "MHL_DEFAULT_WITH_PRESERVED_GRANTS",
+  "user_verbatim": "우리 모든 publci 을 메타휴모토닉 라이센스로 변경해줘 ㅇ",
+  "source_authority": "USER_PRIMARY",
+  "drafting_author": "OpenAI Codex",
+  "drafting_authority": "SECONDARY_AI",
+  "prior_grants_preserved": true,
+  "actual_hardware_access_granted": false,
+  "third_party_boundary": "Anomalib, models and other third-party components retain their upstream terms.",
+  "preserved_files": [],
+  "publication_tracking": "This is the prepared adoption record. Git history and remote readback establish publication; no full copyright audit or legal review is claimed."
+}
